@@ -13,12 +13,6 @@ from allennlp.data.tokenizers import Token
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-
-def clean_arabic(word: str):
-    diacritics = [chr(1614),chr(1615),chr(1616),chr(1617),chr(1618),chr(1761),chr(1619),chr(1648),chr(1649),chr(1611),chr(1612),chr(1613)]
-    for dia in diacritics:
-        word = re.sub(dia,'',word)
-    return word
 def lazy_parse(text: str, fields: Tuple = DEFAULT_FIELDS):
     for sentence in text.split("\n\n"):
         if sentence:
@@ -69,18 +63,23 @@ class UniversalDependenciesDatasetReader(DatasetReader):
 
                         heads = [x["head"] for x in annotation]
                         tags = [x["deprel"] for x in annotation]
-                        words = [clean_arabic(x["form"]) for x in annotation]
+                        words = [x["form"] for x in annotation]
                         if self.use_language_specific_pos:
                             pos_tags = [x["xpostag"] for x in annotation]
                         else:
                             pos_tags = [x["upostag"] for x in annotation]
                         path_components = file_path.split('/')
-                        if 'arabic' in path_components:
+                        lang = None
+                        if 'arabic' in path_components or 'ara' in path_components:
                             lang = 'ara'
-                        elif 'english' in path_components:
+                        elif 'english' in path_components or 'eng' in path_components:
                             lang = 'eng'
-                        elif 'chinese' in path_components:
+                        elif 'chinese' in path_components or 'cmn' in path_components:
                             lang = 'cmn'
+                        if lang is None:
+                            raise NameError("Lang name could not be automatically detected from file path. "
+                                            "Check universal_dependencies.py to add language names or "
+                                            "change how they are detected.")
                         yield self.text_to_instance(words, pos_tags, list(zip(tags, heads)), lang)
 
     @overrides

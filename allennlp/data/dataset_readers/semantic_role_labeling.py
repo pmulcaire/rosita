@@ -16,6 +16,10 @@ from itertools import repeat
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 def clean_arabic(word: str):
+    """
+    This is to handle the strange Arabic text in Ontonotes, which has many
+    more diacritics than most Arabic text found "in the wild".
+    """
     diacritics = [chr(1614),chr(1615),chr(1616),chr(1617),chr(1618),chr(1761),chr(1619),chr(1648),chr(1649),chr(1611),chr(1612),chr(1613)]
     for dia in diacritics:
         word = re.sub(dia,'',word)
@@ -100,12 +104,17 @@ class SrlReader(DatasetReader):
         for conll_file in ontonotes_reader.dataset_path_iterator(file_path):
             if domain_identifier is None or f"/{domain_identifier}/" in conll_file:
                 path_components = conll_file.split('/')
-                if 'arabic' in path_components:
+                lang = None
+                if 'arabic' in path_components or 'ara' in path_components:
                     lang = 'ara'
-                elif 'english' in path_components:
+                elif 'english' in path_components or 'eng' in path_components:
                     lang = 'eng'
-                elif 'chinese' in path_components:
+                elif 'chinese' in path_components or 'cmn' in path_components:
                     lang = 'cmn'
+                if lang is None:
+                    raise NameError("Lang name could not be automatically detected from file path. "
+                                    "Check universal_dependencies.py to add language names or "
+                                    "change how they are detected.")
                 yield from zip(ontonotes_reader.sentence_iterator(conll_file), repeat(lang))
 
 
