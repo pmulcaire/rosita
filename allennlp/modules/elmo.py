@@ -133,7 +133,7 @@ class Elmo(torch.nn.Module):
         ----------
         inputs: ``torch.Tensor``, required.
         Shape ``(batch_size, timesteps, 50)`` of character ids representing the current batch.
-        word_inputs : ``torch.Tensor``, optional.
+        word_inputs : ``torch.Tensor``, required.
             If you passed a cached vocab, you can in addition pass a tensor of shape
             ``(batch_size, timesteps)``, which represent word ids which have been pre-cached.
 
@@ -159,8 +159,7 @@ class Elmo(torch.nn.Module):
             if self._has_cached_vocab and len(original_word_size) > 2:
                 reshaped_word_inputs = word_inputs.view(-1, original_word_size[-1])
             elif not self._has_cached_vocab:
-                logger.warning("Word inputs were passed to ELMo but it does not have a cached vocab.")
-                reshaped_word_inputs = word_inputs #reshaped_word_inputs = None
+                reshaped_word_inputs = word_inputs
             else:
                 reshaped_word_inputs = word_inputs
         else:
@@ -307,12 +306,12 @@ class _ElmoCharacterEncoder(torch.nn.Module):
 
         self._weight_file = weight_file
 
-        self.output_dim = self._options['lstm']['projection_dim']
+        self.output_dim = self._options['char_cnn']['output_dim']
         self.requires_grad = requires_grad
 
         self._load_weights()
 
-        # Cache the arrays for use in forward -- +1 due to masking.
+        # Cache the arrays for use in forward -- +1 due to masking (not handled in mapper for BOS/EOS).
         self._beginning_of_sentence_characters = torch.from_numpy(
                 numpy.array(self.char_mapper.beginning_of_sentence_characters) + 1
         )
@@ -409,10 +408,10 @@ class _ElmoCharacterEncoder(torch.nn.Module):
             char_embed_weights = fin['char_embed'][...]
 
         weights = numpy.zeros(
-                (char_embed_weights.shape[0] + 2, char_embed_weights.shape[1]),
+                (char_embed_weights.shape[0] + 1, char_embed_weights.shape[1]),
                 dtype='float32'
         )
-        weights[1:-1, :] = char_embed_weights
+        weights[1:, :] = char_embed_weights
 
         self._char_embedding_weights = torch.nn.Parameter(
                 torch.FloatTensor(weights), requires_grad=self.requires_grad
@@ -495,6 +494,22 @@ class _ElmoCharacterEncoder(torch.nn.Module):
             self._projection.bias.requires_grad = self.requires_grad
 
 
+def load_elmo_word_embedding(options_file, weight_file):
+    with h5py.File(cached_path(weight_file), 'r') as fin:
+        word_embed_weights = fin['embedding'][...]
+
+        weights = numpy.zeros(
+            (word_embed_weights.shape[0] + 1, word_embed_weights.shape[1]),
+            dtype='float32'
+        )
+        weights[1:, :] = word_embed_weights
+
+        return Embedding(num_embeddings=weights.shape[0],
+                         embedding_dim=weights.shape[1],
+                         projection_dim=None,
+                         weight=torch.Tensor(weights))
+
+
 class _ElmoBiLm(torch.nn.Module):
     """
     Run a pre-trained bidirectional language model, outputing the activations at each
@@ -528,8 +543,10 @@ class _ElmoBiLm(torch.nn.Module):
         with open(cached_path(options_file), 'r') as fin:
             options = json.load(fin)
         self.char_mapper = PreloadedElmoCharacterMapper(options['char_cnn']['char_map'])
+        self.word_mapper = PreloadedElmoTokenMapper(options['word_emb']['word_map'])
 
         self._char_token_embedder = _ElmoCharacterEncoder(options_file, weight_file, requires_grad=requires_grad)
+        self._word_token_embedder = load_elmo_word_embedding(options_file, weight_file)
 
         self._requires_grad = requires_grad
         if requires_grad and vocab_to_cache:
@@ -563,19 +580,19 @@ class _ElmoBiLm(torch.nn.Module):
 
     def get_output_dim(self):
         # why 2x?
-        return 2 * (self._char_token_embedder.get_output_dim())
+        return 2 * (self._char_token_embedder.get_output_dim() + self._word_token_embedder.get_output_dim())
 
     def forward(self,  # pylint: disable=arguments-differ
                 inputs: torch.Tensor,
-                word_inputs: torch.Tensor=None) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
+                word_inputs: torch.Tensor) -> Dict[str, Union[torch.Tensor, List[torch.Tensor]]]:
         """
         Parameters
         ----------
         inputs: ``torch.Tensor``, required.
             Shape ``(batch_size, timesteps, 50)`` of character ids representing the current batch.
-        word_inputs : ``torch.Tensor``, optional.
+        word_inputs : ``torch.Tensor``, required.
             A tensor of shape ``(batch_size, timesteps)``, which represent word ids. These can be used with the
-            cached vocabulary. 
+            cached vocabulary as well as the pre-loaded word embedding.
 
         Returns
         -------
@@ -617,7 +634,28 @@ class _ElmoBiLm(torch.nn.Module):
             maskc = char_token_embedding['mask']
             ctype_representation = char_token_embedding['token_embedding']
 
-        lstm_outputs = self._elmo_lstm(ctype_representation, maskc)
+        """
+        Compute word-based embedding.
+        """
+        mask_without_bos_eos = (word_inputs > 0).long()
+        word_embedded_inputs = self._word_token_embedder(word_inputs) # type: ignore
+        # shape (batch_size, timesteps + 2, embedding_dim)
+
+        wtype_representation, maskw = add_sentence_boundary_token_ids(
+            word_embedded_inputs,
+            mask_without_bos_eos,
+            self._word_token_embedder(torch.cuda.LongTensor([self.word_mapper.bos_id])), # add BOS
+            self._word_token_embedder(torch.cuda.LongTensor([self.word_mapper.eos_id])) # add EOS
+        )
+
+        """
+        Concatenate word and char representations (in the right order: chars, then words)
+        """
+        concat_representation = torch.cat([ctype_representation,wtype_representation],dim=2)
+        if (maskc != maskw).max().item() > 0:
+            raise RuntimeError("\n\nWord-based and char-based token-level masks differ in elmo.py\n\n")
+
+        lstm_outputs = self._elmo_lstm(concat_representation, maskw)
 
         # Prepare the output.  The first layer is duplicated.
         # Because of minor differences in how masking is applied depending
@@ -626,14 +664,14 @@ class _ElmoBiLm(torch.nn.Module):
         # mask passed on is correct, but the values in the padded areas
         # of the char cnn representations can change.
         output_tensors = [
-                torch.cat([ctype_representation, ctype_representation], dim=-1) * maskc.float().unsqueeze(-1)
+                torch.cat([concat_representation, concat_representation], dim=-1) * maskw.float().unsqueeze(-1)
         ]
         for layer_activations in torch.chunk(lstm_outputs, lstm_outputs.size(0), dim=0):
             output_tensors.append(layer_activations.squeeze(0))
 
         return {
                 'activations': output_tensors,
-                'mask': maskc,
+                'mask': maskw,
         }
 
     def create_cached_cnn_embeddings(self, tokens: List[str]) -> None:

@@ -23,14 +23,20 @@ def main(args):
 
     # number of tokens in training data
     #                768648884 (for 1B Word Benchmark)
-    n_train_tokens = 768648884
+    n_train_tokens = 120000000
 
     options = {
         'bidirectional': True,
-
+        'word_emb': {
+            'word_map': os.path.abspath(os.path.join(args.save_dir,"word_vocab.txt")),
+            'file': args.word_emb,
+            'output_dim': 300,
+            'vocab': os.path.abspath(args.vocab_file)
+        },
         'char_cnn': {
-            'activation': 'relu',
             'char_map': os.path.abspath(os.path.join(args.save_dir,'char_vocab.txt')),
+            'output_dim': 212,
+            'activation': 'relu',
             'embedding': {'dim': 16},
             'filters': [[1, 32],
                         [2, 32],
@@ -51,7 +57,7 @@ def main(args):
             'dim': 2048,
             'n_layers': 2,
             'proj_clip': 3,
-            'projection_dim': 256,
+            'projection_dim': 512,
             'use_skip_connections': True
         },
     
@@ -81,6 +87,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_dir', help='Location of checkpoint files')
     parser.add_argument('--vocab_file', help='Vocabulary file')
     parser.add_argument('--train_paths', nargs='+', help='Filenames for train files')
+    parser.add_argument('--word_emb', help='File with pretrained embeddings, _unprefixed_')
     parser.add_argument('--gpu', nargs='+', help='GPU id')
 
     args = parser.parse_args()

@@ -8,8 +8,6 @@ from allennlp.data.tokenizers.token import Token
 from allennlp.data.token_indexers.token_indexer import TokenIndexer
 from allennlp.data.vocabulary import Vocabulary
 
-import IPython as ipy
-
 def _make_bos_eos(
         character: int,
         padding_character: int,
@@ -166,7 +164,6 @@ class ELMoTokenCharactersIndexer(TokenIndexer[List[int]]):
                           index_name: str) -> Dict[str, List[List[int]]]:
         # pylint: disable=unused-argument
         texts = [token.text for token in tokens]
-        #ipy.embed()
 
         if any(text is None for text in texts):
             raise ConfigurationError('ELMoTokenCharactersIndexer needs a tokenizer '

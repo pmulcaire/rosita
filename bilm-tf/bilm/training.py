@@ -28,6 +28,50 @@ def print_variable_summary():
     variables = sorted([[v.name, v.get_shape()] for v in tf.global_variables()])
     pprint.pprint(variables)
 
+def load_word_embedding(emb_filename, vocab_filename, dim):
+    """
+    Load all embeddings into a dictionary, then create array of
+    embeddings for the words in the vocabulary.
+    """
+    vocab = load_vocab(vocab_filename, max_word_length=50, polyglot=True)
+    embs = {}
+    print("Loading embeddings from {}".format(emb_filename))
+    for line in open(emb_filename,'r'):
+        if '\xa0' in line:
+            continue
+        line = line.strip()
+        ls = line.split()
+        if len(ls) < 3:
+            continue #probably the header line, or a blank line at the end
+        if len(ls[1:]) != dim and len(embs) == 0:
+            raise ValueError("Loaded embs have len "
+                             "{} but len {} specified".format(len(ls[1:]),dim))
+        elif len(ls[1:]) != dim:
+            continue
+        w = ls[0]
+        v = [float(f) for f in ls[1:]]
+        embs[w] = v
+    embedding = []
+    wordlist = []
+    nunks = 0
+    for i,wlpair in enumerate(vocab._id_to_wordl):
+        if len(wlpair) == 2 and len(wlpair[0]) > 0:
+            word = wlpair[0]
+        else:
+            word = wlpair
+        if word in embs:
+            embedding.append(embs[word])
+        elif "<UNK>" in embs:
+            word = "<UNK>"
+            embedding.append(embs["<UNK>"])
+        else:
+            word = "<UNK>"
+            nunks += 1
+            embedding.append([f/2 for f in np.random.randn(dim)])
+        wordlist.append(word)
+    embedding = np.array(embedding)
+    return embedding
+
 
 class LanguageModel(object):
     '''
@@ -59,13 +103,28 @@ class LanguageModel(object):
         self.is_training = is_training
         self.bidirectional = options.get('bidirectional', False)
 
-        # use word or char inputs?
+        # use word or char inputs or both
         self.char_inputs = 'char_cnn' in self.options
+        self.word_inputs = 'word_emb' in self.options
+        if not self.char_inputs and not self.word_inputs:
+            raise ValueError("Must set char_cnn, word_emb, or both in options "
+                             "to specify input method(s)")
+
+        input_dim = 0
+        if self.char_inputs:
+            input_dim += self.options['char_cnn']['output_dim']
+        if self.word_inputs:
+            input_dim += self.options['word_emb']['output_dim']
+        if input_dim != self.options['lstm']['projection_dim']:
+            raise ValueError("Sum of char_cnn and word_embbedding dimensions ({}) "
+                             "does not equal lstm projection_dim ({})".format(input_dim,
+                                                                              self.options['lstm']['projection_dim']))
 
         # for the loss function
         self.share_embedding_softmax = options.get(
             'share_embedding_softmax', False)
-        if self.char_inputs and self.share_embedding_softmax:
+
+        if not self.word_inputs and self.share_embedding_softmax:
             raise ValueError("Sharing softmax and embedding weights requires "
                              "word input")
 
@@ -79,7 +138,7 @@ class LanguageModel(object):
         unroll_steps = self.options['unroll_steps']
 
         # LSTM options
-        projection_dim = self.options['lstm']['projection_dim']
+        output_dim = self.options['word_emb']['output_dim']
 
         # the input token_ids and word embeddings
         self.token_ids = tf.placeholder(DTYPE_INT,
@@ -87,12 +146,26 @@ class LanguageModel(object):
                                name='token_ids')
         # the word embeddings
         with tf.device("/cpu:0"):
-            self.embedding_weights = tf.get_variable(
-                "embedding", [n_tokens_vocab, projection_dim],
-                dtype=DTYPE,
-            )
-            self.embedding = tf.nn.embedding_lookup(self.embedding_weights,
-                                                self.token_ids)
+            if 'file' in self.options['word_emb']:
+                # use pretrained embeddings
+                if 'vocab' not in self.options['word_emb']:
+                    raise AttributeError("Options file has pretrained embedding file "
+                                         "but does not include vocab file for sorting.")
+                npembed =  load_word_embedding(self.options['word_emb']['file'],
+                                         self.options['word_emb']['vocab'],
+                                         output_dim)
+                self.embedding_weights_word = tf.get_variable(name="embedding",
+                                                              shape=[n_tokens_vocab,output_dim],
+                                                              initializer=tf.constant_initializer(npembed),
+                                                              trainable=True)
+            else:
+                # use randomly initialized embeddings
+                self.embedding_weights_word = tf.get_variable(
+                    "embedding", [n_tokens_vocab, output_dim],
+                    dtype=DTYPE,
+                    trainable=True)
+            self.embedding_from_words = tf.nn.embedding_lookup(self.embedding_weights_word,
+                                                               self.token_ids)
 
         # if a bidirectional LM then make placeholders for reverse
         # model and embeddings
@@ -101,8 +174,8 @@ class LanguageModel(object):
                                shape=(batch_size, unroll_steps),
                                name='token_ids_reverse')
             with tf.device("/cpu:0"):
-                self.embedding_reverse = tf.nn.embedding_lookup(
-                    self.embedding_weights, self.token_ids_reverse)
+                self.embedding_reverse_from_words = tf.nn.embedding_lookup(
+                    self.embedding_weights_word, self.token_ids_reverse)
 
     def _build_word_char_embeddings(self):
         '''
@@ -134,7 +207,7 @@ class LanguageModel(object):
         '''
         batch_size = self.options['batch_size']
         unroll_steps = self.options['unroll_steps']
-        projection_dim = self.options['lstm']['projection_dim']
+        output_dim = self.options['char_cnn']['output_dim']
     
         cnn_options = self.options['char_cnn']
         filters = cnn_options['filters']
@@ -153,21 +226,21 @@ class LanguageModel(object):
                                    name='tokens_characters')
         # the character embeddings
         with tf.device("/cpu:0"):
-            self.embedding_weights = tf.get_variable(
+            self.embedding_weights_char = tf.get_variable(
                     "char_embed", [n_chars, char_embed_dim],
                     dtype=DTYPE,
                     initializer=tf.random_uniform_initializer(-1.0, 1.0)
             )
             # shape (batch_size, unroll_steps, max_chars, embed_dim)
-            self.char_embedding = tf.nn.embedding_lookup(self.embedding_weights,
-                                                    self.tokens_characters)
+            self.char_embedding = tf.nn.embedding_lookup(self.embedding_weights_char,
+                                                         self.tokens_characters)
 
             if self.bidirectional:
                 self.tokens_characters_reverse = tf.placeholder(DTYPE_INT,
                                    shape=(batch_size, unroll_steps, max_chars),
                                    name='tokens_characters_reverse')
                 self.char_embedding_reverse = tf.nn.embedding_lookup(
-                    self.embedding_weights, self.tokens_characters_reverse)
+                    self.embedding_weights_char, self.tokens_characters_reverse)
 
 
         # the convolutions
@@ -233,25 +306,25 @@ class LanguageModel(object):
         #   reshape from (batch_size, n_tokens, dim) to
         n_highway = cnn_options.get('n_highway')
         use_highway = n_highway is not None and n_highway > 0
-        use_proj = n_filters != projection_dim
+        use_proj = n_filters != output_dim
 
         if use_highway or use_proj:
             embedding = tf.reshape(embedding, [-1, n_filters])
             if self.bidirectional:
                 embedding_reverse = tf.reshape(embedding_reverse,
-                    [-1, n_filters])
+                                               [-1, n_filters])
 
         # set up weights for projection
         if use_proj:
-            assert n_filters > projection_dim
+            assert n_filters > output_dim
             with tf.variable_scope('CNN_proj') as scope:
                     W_proj_cnn = tf.get_variable(
-                        "W_proj", [n_filters, projection_dim],
+                        "W_proj", [n_filters, output_dim],
                         initializer=tf.random_normal_initializer(
                             mean=0.0, stddev=np.sqrt(1.0 / n_filters)),
                         dtype=DTYPE)
                     b_proj_cnn = tf.get_variable(
-                        "b_proj", [projection_dim],
+                        "b_proj", [output_dim],
                         initializer=tf.constant_initializer(0.0),
                         dtype=DTYPE)
 
@@ -305,20 +378,20 @@ class LanguageModel(object):
                     + b_proj_cnn
             self.token_embedding_layers.append(
                 tf.reshape(embedding,
-                        [batch_size, unroll_steps, projection_dim])
+                        [batch_size, unroll_steps, output_dim])
             )
 
         # reshape back to (batch_size, tokens, dim)
         if use_highway or use_proj:
-            shp = [batch_size, unroll_steps, projection_dim]
+            shp = [batch_size, unroll_steps, output_dim]
             embedding = tf.reshape(embedding, shp)
             if self.bidirectional:
                 embedding_reverse = tf.reshape(embedding_reverse, shp)
 
         # at last assign attributes for remainder of the model
-        self.embedding = embedding
+        self.embedding_from_chars = embedding
         if self.bidirectional:
-            self.embedding_reverse = embedding_reverse
+            self.embedding_reverse_from_chars = embedding_reverse
 
     def _build(self):
         # size of input options
@@ -333,10 +406,18 @@ class LanguageModel(object):
         dropout = self.options['dropout']
         keep_prob = 1.0 - dropout
 
+        embed_vals = []
+        embed_vals_reverse = []
         if self.char_inputs:
             self._build_word_char_embeddings()
-        else:
+            embed_vals.append(self.embedding_from_chars)
+            embed_vals_reverse.append(self.embedding_reverse_from_chars)
+        if self.word_inputs:
             self._build_word_embeddings()
+            embed_vals.append(self.embedding_from_words)
+            embed_vals_reverse.append(self.embedding_reverse_from_words)
+        self.embedding = tf.concat(embed_vals,axis=2,name='embed_concat')
+        self.embedding_reverse = tf.concat(embed_vals_reverse,axis=2,name='embed_rev_concat')
 
         # now the LSTMs
         # these will collect the initial states for the forward
@@ -461,7 +542,8 @@ class LanguageModel(object):
         # the output softmax variables -- they are shared if bidirectional
         if self.share_embedding_softmax:
             # softmax_W is just the embedding layer
-            self.softmax_W = self.embedding_weights
+            # can only share with the word embedding
+            self.softmax_W = self.embedding_weights_word
 
         with tf.variable_scope('softmax'), tf.device('/cpu:0'):
             # Glorit init (std=(1.0 / sqrt(fan_in))
@@ -515,6 +597,7 @@ class LanguageModel(object):
                         logits=output_scores,
                         labels=tf.squeeze(next_token_id_flat, squeeze_dims=[1])
                     )
+            self.micro_losses = losses
             self.individual_losses.append(tf.reduce_mean(losses))
 
         # now make the total loss -- it's the mean of the individual losses
@@ -638,23 +721,24 @@ def _deduplicate_indexed_slices(values, indices):
     return (summed_values, unique_indices)
 
 
-def _get_feed_dict_from_X(X, start, end, model, char_inputs, bidirectional):
+def _get_feed_dict_from_X(X, start, end, model, char_inputs, word_inputs, bidirectional):
     feed_dict = {}
-    if not char_inputs:
-        token_ids = X['token_ids'][start:end]
-        feed_dict[model.token_ids] = token_ids
-    else:
+    if char_inputs:
         # character inputs
         char_ids = X['tokens_characters'][start:end]
         feed_dict[model.tokens_characters] = char_ids
+    if word_inputs:
+        # word inputs
+        token_ids = X['token_ids'][start:end]
+        feed_dict[model.token_ids] = token_ids
 
     if bidirectional:
-        if not char_inputs:
-            feed_dict[model.token_ids_reverse] = \
-                X['token_ids_reverse'][start:end]
-        else:
+        if char_inputs:
             feed_dict[model.tokens_characters_reverse] = \
                 X['tokens_characters_reverse'][start:end]
+        if word_inputs:
+            feed_dict[model.token_ids_reverse] = \
+                X['token_ids_reverse'][start:end]
 
     # now the targets with weights
     next_id_placeholders = [[model.next_token_id, '']]
@@ -797,35 +881,38 @@ def train(options, data, dev_data, n_gpus, tf_save_dir, tf_log_dir,
             final_state_tensors.extend(model.final_lstm_state)
 
         char_inputs = 'char_cnn' in options
+        word_inputs = 'word_emb' in options
+
         if char_inputs:
             max_chars = options['char_cnn']['max_characters_per_token']
 
-        if not char_inputs:
-            feed_dict = {
-                model.token_ids:
-                    np.zeros([batch_size, unroll_steps], dtype=np.int64)
-                for model in models
-            }
-        else:
-            feed_dict = {
+        feed_dict = {}
+        if char_inputs:
+            feed_dict.update({
                 model.tokens_characters:
                     np.zeros([batch_size, unroll_steps, max_chars],
                              dtype=np.int32)
                 for model in models
-            }
+            })
+        if word_inputs:
+            feed_dict.update({
+                model.token_ids:
+                    np.zeros([batch_size, unroll_steps], dtype=np.int64)
+                for model in models
+            })
 
         if bidirectional:
-            if not char_inputs:
-                feed_dict.update({
-                    model.token_ids_reverse:
-                        np.zeros([batch_size, unroll_steps], dtype=np.int64)
-                    for model in models
-                })
-            else:
+            if char_inputs:
                 feed_dict.update({
                     model.tokens_characters_reverse:
                         np.zeros([batch_size, unroll_steps, max_chars],
                                  dtype=np.int32)
+                    for model in models
+                })
+            if word_inputs:
+                feed_dict.update({
+                    model.token_ids_reverse:
+                        np.zeros([batch_size, unroll_steps], dtype=np.int64)
                     for model in models
                 })
 
@@ -850,8 +937,18 @@ def train(options, data, dev_data, n_gpus, tf_save_dir, tf_log_dir,
 
                 feed_dict.update(
                     _get_feed_dict_from_X(X, start, end, model,
-                                          char_inputs, bidirectional)
+                                          char_inputs, word_inputs,
+                                          bidirectional)
                 )
+
+            for keyn in feed_dict.keys():
+                try:
+                    if 'tokens_characters' in keyn.name and 'reverse' not in keyn.name:
+                        x = feed_dict[keyn]
+                        if x.max() > data.vocab._data_forward.vocab.n_chars:
+                            raise RuntimeError("Weird character id ({} > {}) in feed_dict".format(x.max(), data.vocab._data_forward.vocab.n_chars))
+                except AttributeError:
+                    continue
 
             # This runs the train_op, summaries and the "final_state_tensors"
             #   which just returns the tensors, passing in the initial
@@ -887,6 +984,8 @@ def train(options, data, dev_data, n_gpus, tf_save_dir, tf_log_dir,
                 print("Batch %s, train_perplexity=%s" % (batch_no, ret[2]))
                 print("Total time: %s" % (time.time() - t1))
 
+            #print("Batch %s, train_perplexity=%s" % (batch_no, ret[2]))
+
             if (batch_no % 1250 == 0) or (batch_no == n_batches_total):
                 # save the model
                 checkpoint_path = os.path.join(tf_save_dir, 'model.ckpt')
@@ -909,7 +1008,8 @@ def train(options, data, dev_data, n_gpus, tf_save_dir, tf_log_dir,
                         end = (k + 1) * batch_size
                         dev_feed_dict.update(
                             _get_feed_dict_from_X(X, start, end, model,
-                                                  char_inputs, bidirectional)
+                                                  char_inputs, word_inputs,
+                                                  bidirectional)
                         )
 
                     dev_summary, dev_plx, init_state_values = sess.run(
@@ -995,6 +1095,7 @@ def test(options, ckpt_file, data, batch_size=256):
 
     bidirectional = options.get('bidirectional', False)
     char_inputs = 'char_cnn' in options
+    word_inputs = 'word_emb' in options
     if char_inputs:
         max_chars = options['char_cnn']['max_characters_per_token']
 
@@ -1017,17 +1118,7 @@ def test(options, ckpt_file, data, batch_size=256):
         # perplexity is exp(loss)
         init_state_tensors = model.init_lstm_state
         final_state_tensors = model.final_lstm_state
-        if not char_inputs:
-            feed_dict = {
-                model.token_ids:
-                        np.zeros([batch_size, unroll_steps], dtype=np.int64)
-            }
-            if bidirectional:
-                feed_dict.update({
-                    model.token_ids_reverse:
-                        np.zeros([batch_size, unroll_steps], dtype=np.int64)
-                })  
-        else:
+        if char_inputs:
             feed_dict = {
                 model.tokens_characters:
                    np.zeros([batch_size, unroll_steps, max_chars],
@@ -1038,6 +1129,16 @@ def test(options, ckpt_file, data, batch_size=256):
                     model.tokens_characters_reverse:
                         np.zeros([batch_size, unroll_steps, max_chars],
                             dtype=np.int32)
+                })
+        if word_inputs:
+            feed_dict = {
+                model.token_ids:
+                        np.zeros([batch_size, unroll_steps], dtype=np.int64)
+            }
+            if bidirectional:
+                feed_dict.update({
+                    model.token_ids_reverse:
+                        np.zeros([batch_size, unroll_steps], dtype=np.int64)
                 })
 
         init_state_values = sess.run(
@@ -1057,7 +1158,7 @@ def test(options, ckpt_file, data, batch_size=256):
 
             feed_dict.update(
                 _get_feed_dict_from_X(X, 0, X['token_ids'].shape[0], model, 
-                                          char_inputs, bidirectional)
+                                          char_inputs, word_inputs, bidirectional)
             )
 
             ret = sess.run(

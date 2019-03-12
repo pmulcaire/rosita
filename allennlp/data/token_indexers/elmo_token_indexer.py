@@ -21,7 +21,7 @@ class PreloadedElmoTokenMapper:
         with open(word_map_path,'r') as f:
             for line in f:
                 word,lang,idx = line.split()
-                self.word_map[word] = int(idx) + 1 # do we need the +1 here, to match the automatic assignment of padding to 0 done in elmo.py? <----------------- TODO
+                self.word_map[word] = int(idx)
         self.bos_token = '<S>'
         self.eos_token = '</S>'
         self.bos_id = self.convert_word_to_id(self.bos_token)
