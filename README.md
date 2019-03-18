@@ -1,212 +1,69 @@
-Personal fork of allennlp. Original allennlp README.md below.
+A fork of the [AllenNLP](http://www.allennlp.org/) research library with extensions for training polyglot models.
 
-[![Build Status](http://build.allennlp.org/app/rest/builds/buildType:(id:AllenNLP_AllenNLPCommits)/statusIcon)](http://build.allennlp.org/viewType.html?buildTypeId=AllenNLP_AllenNLPCommits&guest=1)
-[![codecov](https://codecov.io/gh/allenai/allennlp/branch/master/graph/badge.svg)](https://codecov.io/gh/allenai/allennlp)
+## Overview
 
-An [Apache 2.0](https://github.com/allenai/allennlp/blob/master/LICENSE) NLP research library, built on PyTorch,
-for developing state-of-the-art deep learning models on a wide variety of linguistic tasks.
-
-## Quick Links
-
-* [Website](http://www.allennlp.org/)
-* [Tutorial](https://allennlp.org/tutorials)
-* [Documentation](https://allenai.github.io/allennlp-docs/)
-* [Contributing Guidelines](CONTRIBUTING.md)
-* [Model List](MODELS.md)
-* [Continuous Build](http://build.allennlp.org/)
-
-## Package Overview
-
-<table>
-<tr>
-    <td><b> allennlp </b></td>
-    <td> an open-source NLP research library, built on PyTorch </td>
-</tr>
-<tr>
-    <td><b> allennlp.commands </b></td>
-    <td> functionality for a CLI and web service </td>
-</tr>
-<tr>
-    <td><b> allennlp.data </b></td>
-    <td> a data processing module for loading datasets and encoding strings as integers for representation in matrices </td>
-</tr>
-<tr>
-    <td><b> allennlp.models </b></td>
-    <td> a collection of state-of-the-art models </td>
-</tr>
-<tr>
-    <td><b> allennlp.modules </b></td>
-    <td> a collection of PyTorch modules for use with text </td>
-</tr>
-<tr>
-    <td><b> allennlp.nn </b></td>
-    <td> tensor utility functions, such as initializers and activation functions </td>
-</tr>
-<tr>
-    <td><b> allennlp.service </b></td>
-    <td> a web server to that can serve demos for your models </td>
-</tr>
-<tr>
-    <td><b> allennlp.training </b></td>
-    <td> functionality for training models </td>
-</tr>
-</table>
+* bilm-tf: based on the [bilm-tf](https://github.com/allenai/bilm-tf) library, for training multilingual LMs
+* allennlp: based on the [allennlp](https://github.com/allenai/allennlp) library, for using contextual word embeddings from multilingual LMs.
 
 ## Installation
 
-AllenNLP requires Python 3.6.1 or later. The preferred way to install AllenNLP is via `pip`.  Just run `pip install allennlp` in your Python environment and you're good to go!
+`bilm-tf` and `allennlp` have different requirements.
+You will need a python 3.5 environment with tensorflow version 1.2 and h5py to use bilm-tf to train multilingual language models.
+You will need a python 3.6 environment with PyTorch version >=0.4.1 to use the multilingual language models for contextual embeddings in AllenNLP models.
+See [the original bilm-tf README](https://github.com/allenai/bilm-tf/blob/master/README.md) and [the original allennlp README](https://github.com/allenai/allennlp/blob/master/README.md) (install from source) for installation details.
 
-If you need pointers on setting up an appropriate Python environment or would like to install AllenNLP using a different method, see below.
+## Training language models with Rosita
 
-Windows is currently not officially supported, although we try to fix issues when they are easily addressed.
+You can train a polyglot language model with the following command (in the python 3.5 + tensorflow environment):
 
-### Installing via pip
+```
+python bilm-tf/bin/train_elmo_poly.py --save_dir [path/to/model/dir] --vocab_file [path/to/vocab.txt] --train_paths [multiple/paths/to/files_*.txt]
+```
 
-#### Setting up a virtual environment
+Make sure to edit the `n_train_tokens` in `bilm-tf/bin/train_elmo_poly.py` to reflect the number of tokens in your corpus.
 
-[Conda](https://conda.io/) can be used set up a virtual environment with the
-version of Python required for AllenNLP.  If you already have a Python 3.6 or 3.7
-environment you want to use, you can skip to the 'installing via pip' section.
+Optionally, you can specify a gpu to train with using the flag `--gpu k`.
 
-1.  [Download and install Conda](https://conda.io/docs/download.html).
+The vocabulary file should have one word per line, starting with the special tokens `<S>`, `</S>` and `<UNK>` and sorted by descending frequency.
+Non-special words should be prefixed with a language code, e.g. `eng:example`.
+You can produce a vocab file from your training data with the  `build_vocab.py` script:
 
-2.  Create a Conda environment with Python 3.6
+```
+python bilm-tf/build_vocab.py [/path/to/corpus.txt] [paths/to/additional/textfiles]
+```
 
-    ```bash
-    conda create -n allennlp python=3.6
-    ```
+## Dumping Weights
 
-3.  Activate the Conda environment. You will need to activate the Conda environment in each terminal in which you want to use AllenNLP.
+Once you have trained a LM, you can save its parameters as an HDF5 file to be read by AllenNLP.
 
-    ```bash
-    source activate allennlp
-    ```
-
-#### Installing the library and dependencies
-
-Installing the library and dependencies is simple using `pip`.
-
-   ```bash
-   pip install allennlp
-   ```
-
-That's it! You're now ready to build and train AllenNLP models.
-AllenNLP installs a script when you install the python package, meaning you can run allennlp commands just by typing `allennlp` into a terminal.
-
-You can now test your installation with `allennlp test-install`.
-
-_`pip` currently installs Pytorch for CUDA 9 only (or no GPU). If you require an older version,
-please visit http://pytorch.org/ and install the relevant pytorch binary._
-
-### Installing using Docker
-
-Docker provides a virtual machine with everything set up to run AllenNLP--
-whether you will leverage a GPU or just run on a CPU.  Docker provides more
-isolation and consistency, and also makes it easy to distribute your
-environment to a compute cluster.
-
-Once you have [installed Docker](https://docs.docker.com/engine/installation/)
-just run the following command to get an environment that will run on either the cpu or gpu.
-
-   ```bash
-   docker run -it -p 8000:8000 --rm allennlp/allennlp:v0.7.1
-   ```
-
-You can test the Docker environment with `docker run -it -p 8000:8000 --rm allennlp/allennlp:v0.7.1 test-install`.
-
-### Installing from source
-
-You can also install AllenNLP by cloning our git repository:
-
-  ```bash
-  git clone https://github.com/allenai/allennlp.git
-  ```
-
-Create a Python 3.6 virtual environment, and install the necessary requirements by running:
-
-  ```bash
-  INSTALL_TEST_REQUIREMENTS=true scripts/install_requirements.sh
-  ```
-
-Changing the flag to false if you don't want to be able to run
-tests. Once the requirements have been installed, run:
-
-  ```bash
-  pip install --editable .
-  ```
-
-To install the AllenNLP library in `editable` mode into your
-environment.  This will make `allennlp` available on your
-system but it will use the sources from the local clone you
-made of the source repository.
-
-You can test your installation with `bin/allennlp test-install`.
-The full development environment also requires the JVM and `perl`,
-which must be installed separately.  `./scripts/verify.py` will run
-the full suite of tests used by our continuous build environment.
+```
+python bilm-tf/bin/dump_weights.py --save_dir [path/to/training/output] --outfile [path to save weights, e.g. save_dir/weights.hdf5] --gpu [id]
+```
 
 ## Running AllenNLP
 
-Once you've installed AllenNLP, you can run the command-line interface either
-with the `allennlp` command (if you installed via `pip`) or `bin/allennlp` (if you installed via source).
+Once you've installed our edited AllenNLP from source, you can run the command-line interface with `bin/allennlp` (in the python 3.6 + PyTorch environment).
 
-```bash
-$ allennlp
-Run AllenNLP
-
-optional arguments:
-  -h, --help    show this help message and exit
-  --version     show program's version number and exit
-
-Commands:
-  
-    configure   Generate configuration stubs.
-    train       Train a model
-    evaluate    Evaluate the specified model + dataset
-    predict     Use a trained model to make predictions.
-    make-vocab  Create a vocabulary
-    elmo        Use a trained model to make predictions.
-    fine-tune   Continue training a model on a new dataset
-    dry-run     Create a vocabulary, compute dataset statistics and other
-                training utilities.
-    test-install
-                Run the unit tests.
-```
-
-## Docker images
-
-AllenNLP releases Docker images to [Docker Hub](https://hub.docker.com/r/allennlp/) for each release.  For information on how to run these releases, see [Installing using Docker](#installing-using-docker).
-
-### Building a Docker image
-
-For various reasons you may need to create your own AllenNLP Docker image.
-The same image can be used either with a CPU or a GPU.
-
-First, you need to [install Docker](https://www.docker.com/get-started).
-Then run the following command
-(it will take some time, as it completely builds the
-environment needed to run AllenNLP.)
-
-```bash
-docker build -f Dockerfile.pip --tag allennlp/allennlp:latest .
-```
-
-You should now be able to see this image listed by running `docker images allennlp`.
+An example training configuration is provided for a Universal Dependencies syntactic parser. Once you have an Arabic-English LM, the parser can be trained with the command:
 
 ```
-REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
-allennlp/allennlp            latest              b66aee6cb593        5 minutes ago       2.38GB
+allennlp train training_config/ud-ara-eng_elmo-ara-eng.json --serialization-dir models/rosita-test-ara-eng
 ```
-
-### Running the Docker image
-
-You can run the image with `docker run --rm -it allennlp/allennlp:latest`.  The `--rm` flag cleans up the image on exit and the `-it` flags make the session interactive so you can use the bash shell the Docker image starts.
-
-You can test your installation by running  `allennlp test-install`.
 
 ## Citing
 
-If you use AllenNLP in your research, please cite [AllenNLP: A Deep Semantic Natural Language Processing Platform](https://www.semanticscholar.org/paper/AllenNLP%3A-A-Deep-Semantic-Natural-Language-Platform-Gardner-Grus/a5502187140cdd98d76ae711973dbcdaf1fef46d).
+If you use our method, please cite the paper [Polyglot Contextual Representations Improve Crosslingual Transfer](https://arxiv.org/abs/1902.09697).
+
+```
+@inproceedings{Mulcaire2019Polyglot,
+  title={Polyglot Contextual Representations Improve Crosslingual Transfer},
+  author={Phoebe Mulcaire and Jungo Kasai and Noah A. Smith},
+  year={2019},
+  Eprint = {arXiv:1902.09697},
+}
+```
+
+You should also cite [AllenNLP: A Deep Semantic Natural Language Processing Platform](https://www.semanticscholar.org/paper/AllenNLP%3A-A-Deep-Semantic-Natural-Language-Platform-Gardner-Grus/a5502187140cdd98d76ae711973dbcdaf1fef46d).
 
 ```
 @inproceedings{Gardner2017AllenNLP,
@@ -218,9 +75,3 @@ If you use AllenNLP in your research, please cite [AllenNLP: A Deep Semantic Nat
   Eprint = {arXiv:1803.07640},
 }
 ```
-
-## Team
-
-AllenNLP is an open-source project backed by [the Allen Institute for Artificial Intelligence (AI2)](http://www.allenai.org).
-AI2 is a non-profit institute with the mission to contribute to humanity through high-impact AI research and engineering.
-To learn more about who specifically contributed to this codebase, see [our contributors](https://github.com/allenai/allennlp/graphs/contributors) page.
