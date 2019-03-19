@@ -24,6 +24,8 @@ def main(args):
     # number of tokens in training data
     #                768648884 (for 1B Word Benchmark)
     n_train_tokens = 120000000
+    if args.n_train_tokens is not None:
+        n_train_tokens = int(args.n_train_tokens)
 
     options = {
         'bidirectional': True,
@@ -89,6 +91,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_paths', nargs='+', help='Filenames for train files')
     parser.add_argument('--word_emb', help='File with pretrained embeddings, _unprefixed_')
     parser.add_argument('--gpu', nargs='+', help='GPU id')
+    parser.add_argument('--n_train_tokens', help='number of tokens in training corpus')
 
     args = parser.parse_args()
     main(args)
