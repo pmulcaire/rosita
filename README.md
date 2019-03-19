@@ -20,7 +20,7 @@ You can train a polyglot language model with the following command (in the pytho
 python bilm-tf/bin/train_elmo_poly.py --save_dir [path/to/model/dir] --vocab_file [path/to/vocab.txt] --train_paths [multiple/paths/to/files_*.txt]
 ```
 
-Make sure to edit the `n_train_tokens` in `bilm-tf/bin/train_elmo_poly.py` to reflect the number of tokens in your corpus.
+You can either pass `--n_train_tokens [X]` or edit the default value for `n_train_tokens` in `bilm-tf/bin/train_elmo_poly.py` to reflect the number of tokens in your corpus.
 
 Optionally, you can specify a gpu to train with using the flag `--gpu k`.
 
