@@ -14,10 +14,10 @@ See [the original bilm-tf README](https://github.com/allenai/bilm-tf/blob/master
 
 ## Training language models with Rosita
 
-You can train a polyglot language model with the following command (in the python 3.5 + tensorflow environment):
+You can train a polyglot language model with word embeddings as input using the following command (in the python 3.5 + tensorflow environment):
 
 ```
-python bilm-tf/bin/train_elmo_poly.py --save_dir [path/to/model/dir] --vocab_file [path/to/vocab.txt] --train_paths [multiple/paths/to/files_*.txt]
+python bilm-tf/bin/train_elmo_poly.py --save_dir [path/to/model/dir] --vocab_file [path/to/vocab.txt] --train_paths [multiple/paths/to/files_*.txt] --word_emb [path/to/word_embeddings.txt]
 ```
 
 Make sure to edit the `n_train_tokens` in `bilm-tf/bin/train_elmo_poly.py` to reflect the number of tokens in your corpus.
@@ -31,6 +31,9 @@ You can produce a vocab file from your training data with the  `build_vocab.py` 
 ```
 python bilm-tf/build_vocab.py [/path/to/corpus.txt] [paths/to/additional/textfiles]
 ```
+
+The word vector file should be a text file in which each line consists of the word followed by a series of floats.
+All languages' word vectors should be in the same file, and no language prefixes should be used.
 
 ## Dumping weights
 
@@ -47,7 +50,7 @@ Once you've installed our edited AllenNLP from source, you can run the command-l
 An example training configuration is provided for a Universal Dependencies syntactic parser. Once you have an Arabic-English LM, the parser can be trained with the command:
 
 ```
-allennlp train training_config/ud-ara-eng_elmo-ara-eng.json --serialization-dir models/rosita-test-ara-eng
+allennlp train training_config/ud-ara-eng_wordchar-elmo-ara-eng.json --serialization-dir models/rosita-test-ara-eng
 ```
 
 ## Citing

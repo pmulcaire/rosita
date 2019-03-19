@@ -1,0 +1,127 @@
+{
+    "dataset_reader": {
+        "type": "universal_dependencies",
+        "use_language_specific_pos": false,
+	"token_indexers": {
+	    "elmo_chars": {
+		"type": "elmo_characters",
+		"char_map": "$ROSITA_SAVE_DIR/char_vocab.txt"
+	    },
+	    "elmo_tokens": {
+		"type": "elmo_token_id",
+		"word_map": "$ROSITA_SAVE_DIR/word_vocab.txt"
+	    }
+	}
+    },
+    "iterator": {
+        "type": "bucket",
+        "batch_size": 80,
+        "sorting_keys": [
+            [
+                "words",
+                "num_tokens"
+            ]
+        ]
+    },
+    "model": {
+        "type": "biaffine_parser",
+        "arc_representation_dim": 500,
+        "dropout": 0.3,
+        "encoder": {
+            "type": "stacked_bidirectional_lstm",
+            "hidden_size": 400,
+            "input_size": 512,
+            "num_layers": 3,
+            "recurrent_dropout_probability": 0.3,
+            "use_highway": true
+        },
+        "initializer": [
+            [
+                ".*feedforward.*weight",
+                {
+                    "type": "xavier_uniform"
+                }
+            ],
+            [
+                ".*feedforward.*bias",
+                {
+                    "type": "zero"
+                }
+            ],
+            [
+                ".*tag_bilinear.*weight",
+                {
+                    "type": "xavier_uniform"
+                }
+            ],
+            [
+                ".*tag_bilinear.*bias",
+                {
+                    "type": "zero"
+                }
+            ],
+            [
+                ".*weight_ih.*",
+                {
+                    "type": "xavier_uniform"
+                }
+            ],
+            [
+                ".*weight_hh.*",
+                {
+                    "type": "orthogonal"
+                }
+            ],
+            [
+                ".*bias_ih.*",
+                {
+                    "type": "zero"
+                }
+            ],
+            [
+                ".*bias_hh.*",
+                {
+                    "type": "lstm_hidden_bias"
+                }
+            ]
+        ],
+        "input_dropout": 0.3,
+        "tag_representation_dim": 100, "text_field_embedder": {
+            "embedder_to_indexer_map": {
+		"elmo": [
+		    "elmo_chars",
+		    "elmo_tokens"
+		]
+            },
+            "elmo":{
+		"type": "elmo_token_embedder",
+		"weight_file": "$ROSITA_SAVE_DIR/weights.hdf5",
+		"options_file": "$ROSITA_SAVE_DIR/options.json",
+		"do_layer_norm": false,
+		"dropout": 0.0
+            },
+            "allow_unmatched_keys": true,
+        },
+        "use_mst_decoding_for_validation": true
+    },
+    "train_data_path": "$UD_DATA_DIR/ara-eng/train/",
+    "validation_data_path": "$UD_DATA_DIR/ara-eng/dev/",
+    "trainer": {
+        "cuda_device": 0,
+        "grad_norm": 5,
+        "num_epochs": 80,
+        "optimizer": {
+            "type": "dense_sparse_adam",
+            "betas": [
+                0.9,
+                0.9
+            ]
+        },
+        "patience": 50,
+        "num_serialized_models_to_keep": 2,
+        "validation_metric": "+LAS"
+    },
+    "random_seed": 1,
+    "numpy_seed": 1,
+    "pytorch_seed": 1
+}
