@@ -32,7 +32,7 @@ You can produce a vocab file from your training data with the  `build_vocab.py` 
 python bilm-tf/build_vocab.py [/path/to/corpus.txt] [paths/to/additional/textfiles]
 ```
 
-## Dumping Weights
+## Dumping weights
 
 Once you have trained a LM, you can save its parameters as an HDF5 file to be read by AllenNLP.
 
@@ -40,7 +40,7 @@ Once you have trained a LM, you can save its parameters as an HDF5 file to be re
 python bilm-tf/bin/dump_weights.py --save_dir [path/to/training/output] --outfile [path to save weights, e.g. save_dir/weights.hdf5] --gpu [id]
 ```
 
-## Running AllenNLP
+## Running with AllenNLP
 
 Once you've installed our edited AllenNLP from source, you can run the command-line interface with `bin/allennlp` (in the python 3.6 + PyTorch environment).
 
@@ -58,6 +58,7 @@ If you use our method, please cite the paper [Polyglot Contextual Representation
 @inproceedings{Mulcaire2019Polyglot,
   title={Polyglot Contextual Representations Improve Crosslingual Transfer},
   author={Phoebe Mulcaire and Jungo Kasai and Noah A. Smith},
+  booktitle={Proc.\ of NAACL-HLT},
   year={2019},
   Eprint = {arXiv:1902.09697},
 }
